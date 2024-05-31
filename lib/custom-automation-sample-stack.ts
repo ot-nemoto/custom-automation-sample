@@ -1,100 +1,139 @@
 import * as cdk from 'aws-cdk-lib';
-import { Construct } from 'constructs';
-
+import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
-import * as ecsp from 'aws-cdk-lib/aws-ecs-patterns';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
+import { Construct } from 'constructs';
 
 export class CustomAutomationSampleStack extends cdk.Stack {
     constructor(scope: Construct, id: string, props?: cdk.StackProps) {
         super(scope, id, props);
 
-        const ecs_service = new ecsp.ApplicationLoadBalancedFargateService(
+        const vpc = new ec2.Vpc(this, 'Vpc', { maxAzs: 1 });
+        const sg = new ec2.SecurityGroup(this, 'SecurityGroup', {
+            vpc,
+            allowAllOutbound: true,
+        });
+        sg.addIngressRule(
+            ec2.Peer.anyIpv4(),
+            ec2.Port.tcp(80),
+            'Allow HTTP traffic from anywhere'
+        );
+
+        const cluster = new ecs.Cluster(this, 'EcsCluster', {
+            vpc,
+            clusterName: 'custom-automation-sample-cluster',
+        });
+        const taskDefinition = new ecs.FargateTaskDefinition(
             this,
-            'MyWebServer',
+            'custom-automation-task-definition',
             {
-                taskImageOptions: {
-                    image: ecs.ContainerImage.fromRegistry(
-                        'amazon/amazon-ecs-sample'
-                    ),
-                },
-                publicLoadBalancer: true,
+                memoryLimitMiB: 512,
+                cpu: 256,
             }
         );
+        taskDefinition.addContainer('app', {
+            image: ecs.ContainerImage.fromRegistry('amazon/amazon-ecs-sample'),
+        });
+
+        new ecs.FargateService(this, 'ProductionService', {
+            serviceName: 'custom-automation-sample-service-production',
+            cluster,
+            taskDefinition,
+            assignPublicIp: true,
+            securityGroups: [sg],
+        });
+
+        new ecs.FargateService(this, 'StagingService', {
+            serviceName: 'custom-automation-sample-service-staging',
+            cluster,
+            taskDefinition,
+            assignPublicIp: true,
+            securityGroups: [sg],
+        });
 
         const scaleOutECSServiceDocument = new ssm.CfnDocument(
             this,
-            'ScaleOutECSServiceDocument',
+            'ChangeScaleECSServiceDocument',
             {
-                name: 'ScaleOutECSService',
+                name: 'ChangeScaleECSService',
                 documentType: 'Automation',
                 content: {
                     schemaVersion: '0.3',
-                    description: 'ECS service scaleout automation runbook',
+                    description: 'change scale ECSService automation runbook',
                     parameters: {
-                        EcsClusterName: {
+                        Environment: {
                             type: 'String',
-                            default: ecs_service.cluster.clusterName,
+                            default: 'staging',
+                            allowedValues: ['production', 'staging'],
                         },
-                        EcsServiceName: {
+                        Mode: {
                             type: 'String',
-                            default: ecs_service.service.serviceName,
-                        },
-                        DesiredCount: {
-                            type: 'Integer',
-                            default: 2,
+                            default: '節約',
+                            allowedValues: ['節約', '通常', '高負荷'],
                         },
                     },
                     mainSteps: [
                         {
-                            name: 'ECS',
-                            action: 'aws:executeAwsApi',
+                            name: 'Branch',
+                            action: 'aws:branch',
+                            isEnd: true,
                             inputs: {
-                                Service: 'ecs',
-                                Api: 'UpdateService',
-                                cluster: '{{ EcsClusterName }}',
-                                service: '{{ EcsServiceName }}',
-                                desiredCount: '{{ DesiredCount }}',
+                                Choices: [
+                                    {
+                                        NextStep: 'UpdateServiceEconomy',
+                                        Variable: '{{ Mode }}',
+                                        StringEquals: '節約',
+                                    },
+                                    {
+                                        NextStep: 'UpdateServiceRegular',
+                                        Variable: '{{ Mode }}',
+                                        StringEquals: '通常',
+                                    },
+                                    {
+                                        NextStep: 'UpdateServiceHighLoad',
+                                        Variable: '{{ Mode }}',
+                                        StringEquals: '高負荷',
+                                    },
+                                ],
                             },
                         },
-                    ],
-                },
-            }
-        );
-
-        const scaleInECSServiceDocument = new ssm.CfnDocument(
-            this,
-            'ScaleInECSServiceDocument',
-            {
-                name: 'ScaleInECSService',
-                documentType: 'Automation',
-                content: {
-                    schemaVersion: '0.3',
-                    description: 'ECS service scaleout automation runbook',
-                    parameters: {
-                        EcsClusterName: {
-                            type: 'String',
-                            default: ecs_service.cluster.clusterName,
-                        },
-                        EcsServiceName: {
-                            type: 'String',
-                            default: ecs_service.service.serviceName,
-                        },
-                        DesiredCount: {
-                            type: 'Integer',
-                            default: 1,
-                        },
-                    },
-                    mainSteps: [
                         {
-                            name: 'ECS',
+                            name: 'UpdateServiceEconomy',
                             action: 'aws:executeAwsApi',
+                            isEnd: true,
                             inputs: {
                                 Service: 'ecs',
                                 Api: 'UpdateService',
-                                cluster: '{{ EcsClusterName }}',
-                                service: '{{ EcsServiceName }}',
-                                desiredCount: '{{ DesiredCount }}',
+                                cluster: cluster.clusterName,
+                                service:
+                                    'custom-automation-sample-service-{{ Environment }}',
+                                desiredCount: 1,
+                            },
+                        },
+                        {
+                            name: 'UpdateServiceRegular',
+                            action: 'aws:executeAwsApi',
+                            isEnd: true,
+                            inputs: {
+                                Service: 'ecs',
+                                Api: 'UpdateService',
+                                cluster: cluster.clusterName,
+                                service:
+                                    'custom-automation-sample-service-{{ Environment }}',
+                                desiredCount: 2,
+                            },
+                        },
+                        {
+                            name: 'UpdateServiceHighLoad',
+                            action: 'aws:executeAwsApi',
+                            isEnd: true,
+                            inputs: {
+                                Service: 'ecs',
+                                Api: 'UpdateService',
+                                cluster: cluster.clusterName,
+                                service:
+                                    'custom-automation-sample-service-{{ Environment }}',
+                                desiredCount: 3,
                             },
                         },
                     ],

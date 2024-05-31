@@ -51,94 +51,90 @@ export class CustomAutomationSampleStack extends cdk.Stack {
             securityGroups: [sg],
         });
 
-        const scaleOutECSServiceDocument = new ssm.CfnDocument(
-            this,
-            'ChangeScaleECSServiceDocument',
-            {
-                name: 'ChangeScaleECSService',
-                documentType: 'Automation',
-                content: {
-                    schemaVersion: '0.3',
-                    description: 'change scale ECSService automation runbook',
-                    parameters: {
-                        Environment: {
-                            type: 'String',
-                            default: 'staging',
-                            allowedValues: ['production', 'staging'],
-                        },
-                        Mode: {
-                            type: 'String',
-                            default: '節約',
-                            allowedValues: ['節約', '通常', '高負荷'],
+        new ssm.CfnDocument(this, 'ChangeScaleECSServiceDocument', {
+            name: 'ChangeScaleECSService',
+            documentType: 'Automation',
+            content: {
+                schemaVersion: '0.3',
+                description: 'change scale ECSService automation runbook',
+                parameters: {
+                    Environment: {
+                        type: 'String',
+                        default: 'staging',
+                        allowedValues: ['production', 'staging'],
+                    },
+                    Mode: {
+                        type: 'String',
+                        default: '節約',
+                        allowedValues: ['節約', '通常', '高負荷'],
+                    },
+                },
+                mainSteps: [
+                    {
+                        name: 'Branch',
+                        action: 'aws:branch',
+                        isEnd: true,
+                        inputs: {
+                            Choices: [
+                                {
+                                    NextStep: 'UpdateServiceEconomy',
+                                    Variable: '{{ Mode }}',
+                                    StringEquals: '節約',
+                                },
+                                {
+                                    NextStep: 'UpdateServiceRegular',
+                                    Variable: '{{ Mode }}',
+                                    StringEquals: '通常',
+                                },
+                                {
+                                    NextStep: 'UpdateServiceHighLoad',
+                                    Variable: '{{ Mode }}',
+                                    StringEquals: '高負荷',
+                                },
+                            ],
                         },
                     },
-                    mainSteps: [
-                        {
-                            name: 'Branch',
-                            action: 'aws:branch',
-                            isEnd: true,
-                            inputs: {
-                                Choices: [
-                                    {
-                                        NextStep: 'UpdateServiceEconomy',
-                                        Variable: '{{ Mode }}',
-                                        StringEquals: '節約',
-                                    },
-                                    {
-                                        NextStep: 'UpdateServiceRegular',
-                                        Variable: '{{ Mode }}',
-                                        StringEquals: '通常',
-                                    },
-                                    {
-                                        NextStep: 'UpdateServiceHighLoad',
-                                        Variable: '{{ Mode }}',
-                                        StringEquals: '高負荷',
-                                    },
-                                ],
-                            },
+                    {
+                        name: 'UpdateServiceEconomy',
+                        action: 'aws:executeAwsApi',
+                        isEnd: true,
+                        inputs: {
+                            Service: 'ecs',
+                            Api: 'UpdateService',
+                            cluster: cluster.clusterName,
+                            service:
+                                'custom-automation-sample-service-{{ Environment }}',
+                            desiredCount: 1,
                         },
-                        {
-                            name: 'UpdateServiceEconomy',
-                            action: 'aws:executeAwsApi',
-                            isEnd: true,
-                            inputs: {
-                                Service: 'ecs',
-                                Api: 'UpdateService',
-                                cluster: cluster.clusterName,
-                                service:
-                                    'custom-automation-sample-service-{{ Environment }}',
-                                desiredCount: 1,
-                            },
+                    },
+                    {
+                        name: 'UpdateServiceRegular',
+                        action: 'aws:executeAwsApi',
+                        isEnd: true,
+                        inputs: {
+                            Service: 'ecs',
+                            Api: 'UpdateService',
+                            cluster: cluster.clusterName,
+                            service:
+                                'custom-automation-sample-service-{{ Environment }}',
+                            desiredCount: 2,
                         },
-                        {
-                            name: 'UpdateServiceRegular',
-                            action: 'aws:executeAwsApi',
-                            isEnd: true,
-                            inputs: {
-                                Service: 'ecs',
-                                Api: 'UpdateService',
-                                cluster: cluster.clusterName,
-                                service:
-                                    'custom-automation-sample-service-{{ Environment }}',
-                                desiredCount: 2,
-                            },
+                    },
+                    {
+                        name: 'UpdateServiceHighLoad',
+                        action: 'aws:executeAwsApi',
+                        isEnd: true,
+                        inputs: {
+                            Service: 'ecs',
+                            Api: 'UpdateService',
+                            cluster: cluster.clusterName,
+                            service:
+                                'custom-automation-sample-service-{{ Environment }}',
+                            desiredCount: 3,
                         },
-                        {
-                            name: 'UpdateServiceHighLoad',
-                            action: 'aws:executeAwsApi',
-                            isEnd: true,
-                            inputs: {
-                                Service: 'ecs',
-                                Api: 'UpdateService',
-                                cluster: cluster.clusterName,
-                                service:
-                                    'custom-automation-sample-service-{{ Environment }}',
-                                desiredCount: 3,
-                            },
-                        },
-                    ],
-                },
-            }
-        );
+                    },
+                ],
+            },
+        });
     }
 }
